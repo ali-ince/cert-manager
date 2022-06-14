@@ -1,0 +1,8 @@
+version: "3.0"
+
+services:
+  certificates:
+    build:
+      dockerfile: docker-file
+    volumes:
+      - ./:/certificates
