@@ -1,0 +1,119 @@
+# https://taskfile.dev
+
+version: "3"
+
+dotenv:
+  - ca.env
+
+tasks:
+  reset-dir:
+    dir: "{{ .DIR }}"
+    cmds:
+      - rm -rf certs crl csr newcerts private pkcs
+      - rm -f crlnumber
+      - rm -f index*
+      - rm -f serial*
+  
+  reset:
+    cmds:
+      - task: reset-dir
+        vars:
+          DIR: root
+      - task: reset-dir
+        vars:
+          DIR: intermediate
+
+  setup-dir:
+    dir: "{{ .DIR }}"
+    cmds:
+      - mkdir certs crl csr newcerts private pkcs
+      - chmod 700 private
+      - touch index.txt
+      - echo 1000 > serial
+    status:
+      - test -d certs
+      - test -d crl
+      - test -d csr
+      - test -d newcerts
+      - test -d private
+      - test -f index.txt
+      - test -f serial
+
+  root-ca-key:
+    desc: generate root CA private key
+    dir: ./root
+    deps:
+      - task: setup-dir
+        vars:
+          DIR: ./root
+    cmds:
+      - openssl genrsa {{ .ENCRYPT_KEYS }} -out ./private/ca.key.pem 4096
+      - chmod 400 ./private/ca.key.pem
+    status:
+      - test -f ./private/ca.key.pem
+
+  root-ca-cert:
+    desc: generate root CA certificate
+    dir: ./root
+    deps:
+      - root-ca-key
+    cmds:
+      - openssl req -config openssl.cnf -key ./private/ca.key.pem -new -x509 -days 7300 -sha256 -extensions v3_ca -out ./certs/ca.cert.pem -subj "/C={{.COUNTRY}}/ST={{.STATE}}/L={{.LOCALITY}}/O={{.ORGANIZATION}}/OU={{.ORGANIZATIONAL_UNIT}}/CN=Root CA/emailAddress={{.EMAIL}}" -batch
+      - chmod 444 certs/ca.cert.pem
+    status:
+      - test -f ./certs/ca.cert.pem
+
+  intermediate-ca-key:
+    desc: generate intermediate CA private key
+    dir: ./intermediate
+    deps:
+      - task: setup-dir
+        vars:
+          DIR: ./intermediate
+    cmds:
+      - openssl genrsa {{ .ENCRYPT_KEYS }} -out ./private/intermediate.key.pem 4096
+      - chmod 400 ./private/intermediate.key.pem
+    status:
+      - test -f ./private/intermediate.key.pem
+
+  intermediate-ca-cert:
+    desc: generate intermediate CA certificate
+    dir: ./root
+    deps:
+      - root-ca-cert
+      - intermediate-ca-key
+    cmds:
+      - openssl req -config ./../intermediate/openssl.cnf -key ./../intermediate/private/intermediate.key.pem -new -sha256 -out ./../intermediate/csr/intermediate.csr.pem -subj "/C={{.COUNTRY}}/ST={{.STATE}}/L={{.LOCALITY}}/O={{.ORGANIZATION}}/OU={{.ORGANIZATIONAL_UNIT}}/CN=Intermediate CA/emailAddress={{.EMAIL}}" -batch
+      - openssl ca -config openssl.cnf -extensions v3_intermediate_ca -days 3650 -notext -md sha256 -in ./../intermediate/csr/intermediate.csr.pem -out ./../intermediate/certs/intermediate.cert.pem -batch
+      - chmod 444 ./../intermediate/certs/intermediate.cert.pem
+      - cat ./../intermediate/certs/intermediate.cert.pem ./certs/ca.cert.pem > ./../intermediate/certs/ca-chain.pem
+      - chmod 444 ./../intermediate/certs/ca-chain.pem
+    status:
+      - test -f ./../intermediate/csr/intermediate.csr.pem
+      - test -f ./../intermediate/certs/intermediate.cert.pem
+      - test -f ./../intermediate/certs/ca-chain.pem
+
+  generate-server-key:
+    desc: generate server private key
+    dir: ./intermediate
+    deps:
+      - intermediate-ca-cert
+    cmds:
+      - openssl genrsa {{ .ENCRYPT_KEYS }} -out ./private/{{ .HOSTNAME }}.key.pem 2048
+      - chmod 400 ./private/{{ .HOSTNAME }}.key.pem
+    status:
+      - test -f ./private/{{ .HOSTNAME }}.key.pem
+
+  server-cert:
+    desc: generate a server certificate
+    dir: ./intermediate
+    cmds:
+      - task: generate-server-key
+        vars:
+          HOSTNAME: "{{ .HOSTNAME }}"
+      - openssl req -config openssl.cnf -key ./private/{{ .HOSTNAME }}.key.pem -new -sha256 -out ./csr/{{ .HOSTNAME }}.csr.pem -subj "/C={{.COUNTRY}}/ST={{.STATE}}/L={{.LOCALITY}}/O={{.ORGANIZATION}}/OU={{.ORGANIZATIONAL_UNIT}}/CN={{ .HOSTNAME }}/emailAddress={{.EMAIL}}" -addext "subjectAltName = DNS:{{ .HOSTNAME }}" -batch
+      - openssl ca -config openssl.cnf -extensions server_cert -days 375 -notext -md sha256 -in ./csr/{{ .HOSTNAME }}.csr.pem -out ./certs/{{ .HOSTNAME }}.cert.pem -batch
+      - openssl pkcs12 -export -out ./pkcs/{{ .HOSTNAME }}.pfx -inkey ./private/{{ .HOSTNAME }}.key.pem -in ./certs/{{ .HOSTNAME }}.cert.pem -certfile ./certs/ca-chain.pem -passout "pass:changeit"
+    status:
+      - test -f ./csr/{{ .HOSTNAME }}.csr.pem
+      - test -f ./certs/{{ .HOSTNAME }}.cert.pem
