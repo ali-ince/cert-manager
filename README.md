@@ -4,6 +4,8 @@ A very simple setup to generate certificates for your local environment.
 
 ## Pre-requisites
 
+You can use this utility either locally or with docker. With docker you don't need any other dependencies other than docker and docker-compose.
+
 ### Docker
 
 - Docker and Docker compose

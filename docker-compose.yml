@@ -4,5 +4,6 @@ services:
   certificates:
     build:
       dockerfile: docker-file
+      context: ./
     volumes:
       - ./:/certificates
